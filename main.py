@@ -1,5 +1,7 @@
 import tensorflow as tf
 from tensorflow.keras import layers, models
+from tensorflow.keras.applications import ResNet50
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.model_selection import train_test_split
 import numpy as np
@@ -46,24 +48,41 @@ def get_data_test(target_size=(250, 250)):
 
 #23000 max
 
+# Загрузка предварительно обученной модели ResNet50
+base_model = ResNet50(weights='imagenet', include_top=False, input_shape=(500, 500, 3))
+
+# Добавление своих слоев для классификации
 model = models.Sequential([
-    layers.Input(shape=(250, 250, 3)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(32, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(32, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
-    layers.Flatten(),
-    layers.Dense(128, activation='relu'),
-    layers.Dropout(0.2),
-    layers.Dense(64),
-    layers.Dense(5, activation='softmax')  # Количество уникальных классов
+    base_model,
+    layers.GlobalAveragePooling2D(),
+    layers.Dense(512, activation='relu'),
+    layers.Dropout(0.5),
+    layers.Dense(5, activation='softmax')  # 5 классов разных документов
 ])
 
+# Замораживаем веса предварительно обученной модели
+base_model.trainable = False
+
+# Компиляция модели
 model.compile(optimizer='adam',
-              loss=tf.keras.losses.CategoricalCrossentropy(from_logits=False),
+              loss='categorical_crossentropy',
               metrics=['accuracy'])
+
+train_datagen = ImageDataGenerator(rescale=1./255, validation_split=0.2)
+train_generator = train_datagen.flow_from_directory(
+    'dataset_new',
+    target_size=(500, 500),
+    batch_size=32,
+    class_mode='categorical',
+    subset='training'
+)
+validation_generator = train_datagen.flow_from_directory(
+    'dataset_new',
+    target_size=(500, 500),
+    batch_size=32,
+    class_mode='categorical',
+    subset='validation'
+)
 
 
 # Настройка EarlyStopping
@@ -78,13 +97,18 @@ early_stopping = EarlyStopping(monitor='val_loss',  # Следим за изме
                                mode='min',          # Остановка когда значение monitor перестанет уменьшаться
                                restore_best_weights=True)  # Восстановление весов с лучшего шага
 
-#"Миграционная карта", 'Паспорт', "Страница КПП"
-X_train, X_test, y_train, y_test = get_data(bath_size, train_list=[])
 
-history = model.fit(X_train, y_train,
-                    epochs=20,
-                    validation_data=(y_train, y_test),
-                    callbacks=[early_stopping])
+
+# Обучение модели с тонкой настройкой
+history = model.fit(train_generator, epochs=10, validation_data=validation_generator, callbacks=[early_stopping])
+
+# Сохранение модели
+model.save('document_classifier_model.h5')
+
+# Оценка модели
+test_loss, test_acc = model.evaluate(validation_generator)
+print('Точность на тестовом наборе данных:', test_acc)
+
 
 model.save('classification_model_250-3.1.keras')
 
